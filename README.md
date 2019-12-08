@@ -9,8 +9,9 @@ Generate heatmap pictures from gpx data, optional strava downloader.
 
 ## Examples
 
-`./draw.py cluster --activity-type 9`:
+* `./draw.py cluster --activity-type 9`:
 ![a heatmap](images/defaults.png)
 
-`./draw.py cluster --line-color cmap:plasma --activity-type 9 --line-alpha .5`:
+* `./draw.py cluster --line-color cmap:plasma --activity-type 9 --line-alpha .5`:
+   * if the line color has the form `cmap:<name>` the color map name after the colon will be used with the color level determined by the altitude 
 ![another heatmap](images/plasma.png)
