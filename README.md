@@ -4,7 +4,7 @@ Generate heatmap pictures from gpx data, optional strava downloader.
 
 1. Run *download.py* to get your strava *gpx* data
 2. Run *draw.py* to create some pictures
-  * You can either cluster by common location (recommended) or enter a lat-lon pair
+    * You can either cluster by common location (recommended) or enter a lat-lon pair
 
 
 ## Examples
