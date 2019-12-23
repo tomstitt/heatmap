@@ -16,7 +16,11 @@ gpx_url = "https://www.strava.com/activities/{id}/export_gpx"
 activity_txt = "activities.txt"
 
 
-def get_activity_ids(sess):
+def get_activity_ids(sess, current_list=None):
+    if current_list is not None:
+        last_activity = current_list[0]
+    else:
+        last_activity = None
     num_activities = math.inf
     page = 1
     activities = []
@@ -31,7 +35,17 @@ def get_activity_ids(sess):
         if num_activities == math.inf:
             num_activities = obj["total"]
 
-        activities.extend([str(m["id"]) for m in obj["models"]])
+        current = [str(m["id"]) for m in obj["models"]]
+        if last_activity is not None:
+            try:
+                idx = current.index(last_activity)
+                activities.extend(current[0:idx])
+                print("found overlap with previous list")
+                return activities + current_list
+            except IndexError:
+                pass
+
+        activities.extend(current)
         page += 1
         print(f"{len(activities)}/{num_activities}", end="\r")
     return activities
@@ -41,6 +55,7 @@ parser = argparse.ArgumentParser()
 
 parser.add_argument("--output-dir", default="strava")
 parser.add_argument("--activity-list")
+parser.add_argument("--quick", action="store_true", help="exit when the first existing gpx file is found")
 
 args = parser.parse_args()
 
@@ -73,12 +88,11 @@ with requests.session() as sess:
     if not response.url.endswith("dashboard"):
         sys.exit("looks like you failed to authenticate=[")
 
-    if activity_ids is None:
-        print("getting activity list")
-        activity_ids = get_activity_ids(sess)
-        print(f"writing activity list to {args.activity_list}")
-        with open(args.activity_list, "w") as f:
-            f.write("\n".join(activity_ids))
+    print("getting activity list")
+    activity_ids = get_activity_ids(sess, current_list=activity_ids)
+    print(f"writing activity list to {args.activity_list}")
+    with open(args.activity_list, "w") as f:
+        f.write("\n".join(activity_ids))
 
     for count, identifier in enumerate(activity_ids, 1):
         if count % 20 == 0:
@@ -97,6 +111,9 @@ with requests.session() as sess:
                     f.write(content)
         else:
             print(f"{output} already exists")
+            if args.quick:
+                print("found an existing gpx file, exiting")
+                sys.exit(0)
 
 fname = os.path.join(args.output_dir, "skipped.txt")
 print(f"writing skipped activity list to {fname}")

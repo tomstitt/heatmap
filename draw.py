@@ -5,6 +5,7 @@ import os
 import pickle
 from argparse import ArgumentParser, ArgumentDefaultsHelpFormatter
 
+import requests
 import gpxpy
 import matplotlib.pyplot as plt
 from matplotlib.collections import LineCollection
@@ -15,16 +16,21 @@ from sklearn.cluster import DBSCAN
 def plot(data, background_color, line_width, line_color, line_alpha, dpi, label=0):
     if line_color.startswith("cmap:"):
         use_cmap = True
+        max_elev = max([max(d["elevs"]) for d in data])
+        min_elev = min([min(d["elevs"]) for d in data])
+        norm = plt.Normalize(min_elev, max_elev)
+        print(f"> min elevation: {min_elev}, max elevation: {max_elev}")
         line_color = line_color[5:]
+    elif line_color.startswith("lcmap:"):
+        use_cmap = True
+        norm = None
+        line_color = line_color[6:]
     else:
         use_cmap = False
 
-    max_elev = max([max(d["elevs"]) for d in data])
-    min_elev = min([min(d["elevs"]) for d in data])
     fig = plt.figure(facecolor=background_color)
     ax = fig.add_subplot(111)
 
-    print(f"> min elevation: {min_elev}, max elevation: {max_elev}")
     for i, ds in enumerate(data, 1):
         print(f"> plotting ({i}/{len(data)})", end="\r")
         lons = ds["lons"]
@@ -33,7 +39,7 @@ def plot(data, background_color, line_width, line_color, line_alpha, dpi, label=
             elevs = np.array(ds["elevs"])
             points = np.array([lons, lats]).T.reshape(-1, 1, 2)
             segments = np.concatenate([points[:-1], points[1:]], axis=1)
-            lc = LineCollection(segments, cmap=plt.get_cmap(line_color), alpha=line_alpha)
+            lc = LineCollection(segments, cmap=plt.get_cmap(line_color), alpha=line_alpha, norm=norm)
             lc.set_array(elevs)
             lc.set_linewidth(line_width)
             ax.add_collection(lc)
@@ -51,6 +57,8 @@ def plot(data, background_color, line_width, line_color, line_alpha, dpi, label=
     ax.get_xaxis().set_visible(False)
     ax.get_yaxis().set_visible(False)
     ax.set_facecolor(background_color)
+    for spine in ax.spines.values():
+        spine.set_edgecolor(background_color)
     #ax.axis("off")
     #plt.show()
     fig.savefig(f"figure_label_{label}.png", facecolor=fig.get_facecolor(), edgecolor="none", dpi=dpi)
@@ -58,9 +66,9 @@ def plot(data, background_color, line_width, line_color, line_alpha, dpi, label=
     print()
 
 
-def load_gpx(gpx_dir):
-    files = glob.glob(os.path.join(gpx_dir, "*.gpx"))
-    data = []
+def load_gpx(files, data=None):
+    if data is None:
+        data = dict(tracks=[])
     for i, path in enumerate(files, 1):
         print(f"loading {100*i/len(files):.2f}%: ({i}/{len(files)})", end="\r")
 
@@ -70,15 +78,21 @@ def load_gpx(gpx_dir):
         track = gpx.tracks[0]
         segment = track.segments[0]
 
-        data.append({
+        data["tracks"].append({
             "lats": np.array([p.latitude for p in segment.points]),
             "lons": np.array([p.longitude for p in segment.points]),
             "elevs": np.array([p.elevation for p in segment.points]),
             "type": int(track.type),
             "name": track.name,
-            "date": gpx.time
+            "date": gpx.time,
+            "filename": os.path.basename(path)
         })
     print(f"loaded {len(data)} file(s)")
+    file_set = set(os.path.basename(f) for f in files)
+    if "files" in data:
+        data["files"] = data["files"] | file_set
+    else:
+        data["files"] = file_set
     return data
 
 
@@ -112,9 +126,15 @@ cluster_parser.add_argument("--min-cluster-size", type=int, default=10,
 add_shared_args(cluster_parser)
 
 coords_parser = subparsers.add_parser("coords", formatter_class=ArgumentDefaultsHelpFormatter)
-coords_parser.add_argument("--lat", type=float, help="center latitude")
-coords_parser.add_argument("--lon", type=float, help="center longitude")
+coords_parser.add_argument("--lat", type=float, help="center latitude", required=True)
+coords_parser.add_argument("--lon", type=float, help="center longitude", required=True)
 add_shared_args(coords_parser)
+
+find_me_parser = subparsers.add_parser("here", formatter_class=ArgumentDefaultsHelpFormatter)
+add_shared_args(find_me_parser)
+
+all_tracks_parser = subparsers.add_parser("all", formatter_class=ArgumentDefaultsHelpFormatter)
+add_shared_args(all_tracks_parser)
 
 args = parser.parse_args()
 
@@ -122,21 +142,30 @@ plot_keys = ["background_color", "line_color", "line_width", "line_alpha", "dpi"
 plot_args = {k: getattr(args, k) for k in plot_keys}
 
 cache_path = os.path.join(args.gpx_dir, "cache.pkl")
+files = glob.glob(os.path.join(args.gpx_dir, "*.gpx"))
 
 if os.path.exists(cache_path):
     print(f"found cache at {cache_path}")
     with open(cache_path, "rb") as f:
         data = pickle.load(f)
+    new_files = data["files"] ^ set([os.path.basename(f) for f in files])
+    if len(new_files) > 0:
+        print(f"updating cache file {cache_path}")
+        dirname = os.path.dirname(files[0])
+        data = load_gpx([os.path.join(dirname, f) for f in new_files], data)
+        with open(cache_path, "wb") as f:
+            pickle.dump(data, f)
 else:
-    data = load_gpx(args.gpx_dir)
+    data = load_gpx(files)
     print(f"saving cache to {cache_path}")
     with open(cache_path, "wb") as f:
         pickle.dump(data, f)
 
+
 if args.activity_type is not None:
-    data = np.array([d for d in data if d["type"] == args.activity_type])
+    data = np.array([d for d in data["tracks"] if d["type"] == args.activity_type])
 else:
-    data = np.array(data)
+    data = np.array(data["tracks"])
 
 if args.reduction == "average":
     coords = np.array([[np.average(d["lats"]), np.average(d["lons"])] for d in data])
@@ -158,12 +187,19 @@ if args.type == "cluster":
         print(f"plotting cluster {label+1}/{n_clusters}: {len(label_data)} tracks")
         plot(label_data, **plot_args, label=label)
 
-elif args.type == "coords":
-    if args.lon is not None and args.lat is not None:
-        filtered = [d for d,c in zip(data, coords) if np.sqrt(
-            (c[0] - args.lat)**2 + (c[1] - args.lon)**2) <= args.radius]
-        print(f"plotting {len(filtered)} tracks around {args.lat:.4f}, {args.lon:.4f}")
-        plot(filtered, **plot_args)
-    else:
-        print(f"plotting all tracks")
-        plot(data, **plot_args)
+elif args.type == "coords" or args.type == "here":
+    if args.type == "here":
+        resp = requests.get("https://geo.risk3sixty.com/me")
+        obj = resp.json()
+        print(f"looks like you're near {obj['city']}")
+        args.lat = obj["ll"][0]
+        args.lon = obj["ll"][1]
+
+    filtered = [d for d,c in zip(data, coords) if np.sqrt(
+        (c[0] - args.lat)**2 + (c[1] - args.lon)**2) <= args.radius]
+    print(f"plotting {len(filtered)} tracks around {args.lat:.4f}, {args.lon:.4f}")
+    plot(filtered, **plot_args)
+
+else:
+    print(f"plotting all tracks")
+    plot(data, **plot_args)
