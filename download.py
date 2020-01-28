@@ -42,7 +42,7 @@ def get_activity_ids(sess, current_list=None):
                 activities.extend(current[0:idx])
                 print("found overlap with previous list")
                 return activities + current_list
-            except IndexError:
+            except ValueError:
                 pass
 
         activities.extend(current)

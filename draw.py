@@ -12,6 +12,14 @@ from matplotlib.collections import LineCollection
 import numpy as np
 from sklearn.cluster import DBSCAN
 
+import osm
+
+# TODO: move to argparse
+use_osm = True
+osm_color = "salmon"
+osm_line_width = .1
+osm_alpha = .5
+
 
 def plot(data, background_color, line_width, line_color, line_alpha, dpi, label=0):
     if line_color.startswith("cmap:"):
@@ -31,20 +39,25 @@ def plot(data, background_color, line_width, line_color, line_alpha, dpi, label=
     fig = plt.figure(facecolor=background_color)
     ax = fig.add_subplot(111)
 
-    for i, ds in enumerate(data, 1):
-        print(f"> plotting ({i}/{len(data)})", end="\r")
-        lons = ds["lons"]
-        lats = ds["lats"]
-        if use_cmap:
-            elevs = np.array(ds["elevs"])
-            points = np.array([lons, lats]).T.reshape(-1, 1, 2)
-            segments = np.concatenate([points[:-1], points[1:]], axis=1)
-            lc = LineCollection(segments, cmap=plt.get_cmap(line_color), alpha=line_alpha, norm=norm)
-            lc.set_array(elevs)
-            lc.set_linewidth(line_width)
-            ax.add_collection(lc)
-        else:
-            ax.plot(lons, lats, color=line_color, lw=line_width, alpha=line_alpha)
+    if use_cmap:
+        for i, ds in enumerate(data, 1):
+            print(f"> plotting ({i}/{len(data)})", end="\r")
+            lons = ds["lons"]
+            lats = ds["lats"]
+            if use_cmap:
+                elevs = np.array(ds["elevs"])
+                points = np.array([lons, lats]).T.reshape(-1, 1, 2)
+                segments = np.concatenate([points[:-1], points[1:]], axis=1)
+                lc = LineCollection(segments, cmap=plt.get_cmap(line_color),
+                        alpha=line_alpha, norm=norm)
+                lc.set_array(elevs)
+                lc.set_linewidth(line_width)
+                ax.add_collection(lc)
+    else:
+        segments = [[(lon, lat) for lon, lat in zip(d["lons"], d["lats"])] for d in data]
+        lc = LineCollection(segments, colors=line_color, alpha=line_alpha)
+        lc.set_linewidth(line_width)
+        ax.add_collection(lc)
 
     ax.autoscale()
     xlim = ax.get_xlim()
@@ -52,6 +65,31 @@ def plot(data, background_color, line_width, line_color, line_alpha, dpi, label=
     aspect_ratio = (ylim[1] - ylim[0]) / (xlim[1] - xlim[0])
     print(f"> bounding box=[{xlim[0]:.4f}, {ylim[0]:.4f}] x [{xlim[1]:.4f}, {ylim[1]:.4f}], "
         f"aspect ratio={aspect_ratio:.4f}")
+
+    # add paths from open street map
+    if use_osm:
+        print("adding osm data")
+        osm_id = osm.osm_id(xlim[0], ylim[0], xlim[1], ylim[1])
+        osm_file = f"map_{osm_id}.osm"
+        segments_file = f"segments_{osm_id}.pkl"
+        print(f"looking for {segments_file}")
+        if not os.path.exists(segments_file):
+            print(f"looking for {osm_file}")
+            if not os.path.exists(osm_file):
+                osm.download_osm(osm_file, xlim[0], ylim[0], xlim[1], ylim[1])
+            else:
+                print("> found")
+            segments = osm.parse_osm(osm_file)
+            with open(segments_file, "wb") as f:
+                pickle.dump(segments, f)
+        else:
+            print("> found")
+            with open(segments_file, "rb") as f:
+                segments = pickle.load(f)
+
+        lc = LineCollection(segments, colors=osm_color, alpha=osm_alpha)
+        lc.set_linewidth(osm_line_width)
+        ax.add_collection(lc)
 
     ax.set_aspect(aspect_ratio)
     ax.get_xaxis().set_visible(False)
@@ -61,7 +99,8 @@ def plot(data, background_color, line_width, line_color, line_alpha, dpi, label=
         spine.set_edgecolor(background_color)
     #ax.axis("off")
     #plt.show()
-    fig.savefig(f"figure_label_{label}.png", facecolor=fig.get_facecolor(), edgecolor="none", dpi=dpi)
+    fig.savefig(f"figure_label_{label}.png", facecolor=fig.get_facecolor(),
+            edgecolor="none", dpi=dpi)
     plt.close(fig)
     print()
 
@@ -97,19 +136,21 @@ def load_gpx(files, data=None):
 
 
 def add_shared_args(parser):
-    parser.add_argument("--background-color", type=str, default="black",
+    parser.add_argument("--background-color", type=str, default="antiquewhite",
         help="background color of image")
-    parser.add_argument("--line-color", type=str, default="xkcd:sky blue",
+    parser.add_argument("--line-color", type=str, default="darkturquoise",
         help="line color of tracks")
-    parser.add_argument("--line-width", type=float, default=1,
+    parser.add_argument("--line-width", type=float, default=.15,
         help="line width of tracks")
-    parser.add_argument("--line-alpha", type=float, default=.2,
+    parser.add_argument("--line-alpha", type=float, default=.8,
         help="line alpha (transparency) of tracks")
-    parser.add_argument("--dpi", type=int, default=800,
+    parser.add_argument("--dpi", type=int, default=2000,
         help="image quality (dots per inch)")
     parser.add_argument("--radius", type=float, default=.05,
         help="radius in units of degrees for filtering")
-    parser.add_argument("--reduction", choices=["start", "average", "start_stop_average"], default="average",
+    parser.add_argument("--reduction",
+        choices=["start", "average", "start_stop_average"],
+        default="average",
         help="method to get a single lat/lon from a track when filtering")
     parser.add_argument("--activity-type", type=int,
         help="if defined only include this activity type")

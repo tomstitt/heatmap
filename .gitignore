@@ -1,3 +1,5 @@
 strava
 *.png
 *.pyc
+*.osm
+*.pkl
