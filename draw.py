@@ -1,24 +1,61 @@
 #!/usr/bin/env python
 
+from argparse import ArgumentParser, ArgumentDefaultsHelpFormatter
 import glob
 import os
 import pickle
-from argparse import ArgumentParser, ArgumentDefaultsHelpFormatter
+import sys
 
-import requests
 import gpxpy
-import matplotlib.pyplot as plt
+import matplotlib
 from matplotlib.collections import LineCollection
 import numpy as np
+import requests
 from sklearn.cluster import DBSCAN
 
 import osm
 
+matplotlib.use('Agg')
+import matplotlib.pyplot as plt  # noqa: E402
+
 # TODO: move to argparse
-use_osm = True
+use_osm = False
 osm_color = "salmon"
 osm_line_width = .1
 osm_alpha = .5
+use_alpha_recoloring = True
+
+
+def alpha_recolor(filename, background_color):
+    try:
+        from PIL import Image
+    except ImportError:
+        print(f"unable to import pillow, not recoloring")
+        return
+
+    # TODO: support cmaps, .1 seems to work well for me, could even be lower
+    factor = .1
+
+    print(f"recoloring {filename}")
+    # hide DecompressionBombWarning
+    with Image.open(filename) as img:
+        data = np.array(img)
+        print(f"found image with shape {data.shape}")
+
+    sys.stdout.write("finding max alpha... ")
+    max_alpha = np.max(data[:,:,-1])
+    print(max_alpha)
+
+    print("recoloring")
+    data[data[:,:,-1] >= factor*max_alpha] = (255, 0, 0, 255)
+    data[(data[:,:,-1] > 0) * (data[:,:,-1] < factor*max_alpha)] = (0, 0, 255, 255)
+
+    print("adding background")
+    data[data[:,:,-1] == 0] = tuple(v*255 for v in matplotlib.colors.to_rgba(background_color))
+
+    img = Image.fromarray(data)
+    print(f"saving recolored image to {filename}")
+    img.save(filename)
 
 
 def plot(data, background_color, line_width, line_color, line_alpha, dpi, label=0):
@@ -35,6 +72,14 @@ def plot(data, background_color, line_width, line_color, line_alpha, dpi, label=
         line_color = line_color[6:]
     else:
         use_cmap = False
+
+    # save background color, update image with pillow, apply background
+    # overrides line_color
+    if use_alpha_recoloring:
+        original_background_color = background_color
+        background_color = "none"
+        # TODO: compute or const okay?
+        line_alpha = 0.01
 
     fig = plt.figure(facecolor=background_color)
     ax = fig.add_subplot(111)
@@ -99,9 +144,15 @@ def plot(data, background_color, line_width, line_color, line_alpha, dpi, label=
         spine.set_edgecolor(background_color)
     #ax.axis("off")
     #plt.show()
-    fig.savefig(f"figure_label_{label}.png", facecolor=fig.get_facecolor(),
-            edgecolor="none", dpi=dpi)
+
+    filename = f"figure_label_{label}.png"
+    print(f"saving {filename}")
+    fig.savefig(filename, facecolor=fig.get_facecolor(), edgecolor=background_color, dpi=dpi)
     plt.close(fig)
+
+    if use_alpha_recoloring:
+        alpha_recolor(filename, original_background_color)
+
     print()
 
 
